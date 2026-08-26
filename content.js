@@ -2,7 +2,8 @@
     "use strict";
 
     /* =========================================================
-       HEMA REPOST CLEANER - Enhanced Version
+       HEMA REPOST CLEANER
+       Enhanced Version
        ========================================================= */
 
     const PREFIX = "hema_repost_";
@@ -10,8 +11,10 @@
 
     const CONFIG = {
         initialWait: 2500,
-        actionWait: 1000,
-        successWait: 1500,
+
+        shareWait: 1200,
+
+        successWait: 1800,
 
         minNextDelay: 2500,
         maxNextDelay: 5000,
@@ -19,7 +22,7 @@
         maxRetries: 3,
         retryDelay: 1800,
 
-        elementTimeout: 7000,
+        elementTimeout: 10000,
 
         maxQueueSize: 500
     };
@@ -37,42 +40,92 @@
         );
     }
 
+    function log(...args) {
+        console.log(
+            "%c[HEMA REPOST CLEANER]",
+            "color:#fe2c55;font-weight:bold;",
+            ...args
+        );
+    }
+
+    function normalizeText(text) {
+        return String(text || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+    }
+
+    function isVisible(el) {
+        if (!el) return false;
+
+        const style = window.getComputedStyle(el);
+
+        const rect = el.getBoundingClientRect();
+
+        return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.opacity !== "0" &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+    }
+
+    /* =========================================================
+       State Manager
+       ========================================================= */
+
     function getState() {
         try {
             return {
                 isRunning:
-                    sessionStorage.getItem(PREFIX + "isRunning") === "true",
+                    sessionStorage.getItem(
+                        PREFIX + "isRunning"
+                    ) === "true",
 
                 targetCount:
                     parseInt(
-                        sessionStorage.getItem(PREFIX + "targetCount") || "0",
+                        sessionStorage.getItem(
+                            PREFIX + "targetCount"
+                        ) || "0",
                         10
                     ),
 
                 deletedCount:
                     parseInt(
-                        sessionStorage.getItem(PREFIX + "deletedCount") || "0",
+                        sessionStorage.getItem(
+                            PREFIX + "deletedCount"
+                        ) || "0",
                         10
                     ),
 
                 failedCount:
                     parseInt(
-                        sessionStorage.getItem(PREFIX + "failedCount") || "0",
+                        sessionStorage.getItem(
+                            PREFIX + "failedCount"
+                        ) || "0",
                         10
                     ),
 
                 currentIndex:
                     parseInt(
-                        sessionStorage.getItem(PREFIX + "currentIndex") || "0",
+                        sessionStorage.getItem(
+                            PREFIX + "currentIndex"
+                        ) || "0",
                         10
                     ),
 
                 queue: JSON.parse(
-                    sessionStorage.getItem(PREFIX + "queue") || "[]"
+                    sessionStorage.getItem(
+                        PREFIX + "queue"
+                    ) || "[]"
                 )
             };
-        } catch (e) {
-            console.warn("[HEMA] State error:", e);
+        } catch (error) {
+            console.warn(
+                "[HEMA] State error:",
+                error
+            );
 
             return {
                 isRunning: false,
@@ -119,26 +172,28 @@
 
     function clearState() {
         Object.keys(sessionStorage)
-            .filter(key => key.startsWith(PREFIX))
-            .forEach(key => sessionStorage.removeItem(key));
-    }
-
-    function log(...args) {
-        console.log(
-            "%c[HEMA REPOST CLEANER]",
-            "color:#fe2c55;font-weight:bold;",
-            ...args
-        );
+            .filter(key =>
+                key.startsWith(PREFIX)
+            )
+            .forEach(key =>
+                sessionStorage.removeItem(key)
+            );
     }
 
     /* =========================================================
-       Wait for element
+       Wait For Element
        ========================================================= */
 
-    async function waitForElement(getter, timeout = CONFIG.elementTimeout) {
+    async function waitForElement(
+        getter,
+        timeout = CONFIG.elementTimeout
+    ) {
         const start = Date.now();
 
-        while (Date.now() - start < timeout) {
+        while (
+            Date.now() - start <
+            timeout
+        ) {
             try {
                 const element = getter();
 
@@ -147,7 +202,7 @@
                 }
             } catch (_) {}
 
-            await delay(300);
+            await delay(250);
         }
 
         return null;
@@ -161,181 +216,473 @@
         const selectors = [
             'button[aria-label="Share"]',
             'button[aria-label="مشاركة"]',
+
             '[data-e2e="share-icon"]',
             '[data-e2e="browse-share"]',
             '[data-e2e="share-button"]'
         ];
 
         for (const selector of selectors) {
-            const element = document.querySelector(selector);
+            const elements =
+                Array.from(
+                    document.querySelectorAll(
+                        selector
+                    )
+                );
 
-            if (element) {
-                return element.closest("button") || element;
+            const visible =
+                elements.find(isVisible);
+
+            if (visible) {
+                return (
+                    visible.closest(
+                        "button,[role='button']"
+                    ) || visible
+                );
             }
         }
 
-        /* Fallback based on accessible text */
+        /*
+         * Fallback:
+         * Search for Share / مشاركة text.
+         */
 
-        const elements = Array.from(
-            document.querySelectorAll(
-                'button,[role="button"],div,span'
-            )
-        );
+        const elements =
+            Array.from(
+                document.querySelectorAll(
+                    'button,[role="button"],div,span'
+                )
+            );
 
-        const found = elements.find(el => {
-            const text = (el.innerText || "").trim().toLowerCase();
+        for (const el of elements) {
+            if (!isVisible(el)) continue;
 
-            return (
+            const text =
+                normalizeText(
+                    el.innerText ||
+                    el.textContent
+                );
+
+            if (
                 text === "share" ||
                 text === "مشاركة"
-            );
-        });
+            ) {
+                return (
+                    el.closest(
+                        "button,[role='button']"
+                    ) || el
+                );
+            }
+        }
 
-        if (found) {
-            return found.closest("button,[role='button']") || found;
+        /*
+         * SVG fallback.
+         */
+
+        const svgs =
+            Array.from(
+                document.querySelectorAll(
+                    "svg"
+                )
+            );
+
+        for (const svg of svgs) {
+            if (!isVisible(svg)) continue;
+
+            const html =
+                String(
+                    svg.innerHTML || ""
+                ).toLowerCase();
+
+            if (
+                html.includes("share") ||
+                html.includes("arrow")
+            ) {
+                const parent =
+                    svg.closest(
+                        "button,[role='button']"
+                    );
+
+                if (
+                    parent &&
+                    isVisible(parent)
+                ) {
+                    return parent;
+                }
+            }
         }
 
         return null;
     }
 
     /* =========================================================
-       Find Remove Repost Button
+       Find Remove Repost
        ========================================================= */
 
     function findRemoveRepostButton() {
-        const selectors = [
-            '[data-e2e="remove-repost"]',
-            'button[aria-label="Remove repost"]',
-            'button[aria-label="إزالة إعادة النشر"]'
-        ];
-
-        for (const selector of selectors) {
-            const element = document.querySelector(selector);
-
-            if (element) {
-                return element.closest("button") || element;
-            }
-        }
-
-        const elements = Array.from(
-            document.querySelectorAll(
-                'button,[role="button"],span,div,p'
-            )
-        );
-
-        const texts = [
+        const exactTexts = [
+            "Remove repost",
             "إزالة إعادة النشر",
-            "remove repost",
-            "remove reposts",
+            "Remove reposts",
             "إزالة إعادة نشر"
         ];
 
-        const found = elements.find(el => {
-            const text = (el.innerText || "")
-                .trim()
-                .toLowerCase();
+        /*
+         * 1. Selectors
+         */
 
-            return texts.some(t =>
-                text === t.toLowerCase()
-            );
-        });
+        const selectors = [
+            '[data-e2e="remove-repost"]',
 
-        if (found) {
-            return (
-                found.closest(
-                    "button,[role='button']"
-                ) || found
+            'button[aria-label="Remove repost"]',
+            'button[aria-label="إزالة إعادة النشر"]',
+
+            '[role="menuitem"]',
+            '[role="option"]'
+        ];
+
+        for (const selector of selectors) {
+            const elements =
+                Array.from(
+                    document.querySelectorAll(
+                        selector
+                    )
+                );
+
+            for (const el of elements) {
+                if (!isVisible(el)) continue;
+
+                const text =
+                    normalizeText(
+                        el.innerText ||
+                        el.textContent
+                    );
+
+                if (
+                    exactTexts.some(
+                        target =>
+                            text ===
+                            target.toLowerCase()
+                    )
+                ) {
+                    return (
+                        el.closest(
+                            "button,[role='button'],[role='menuitem'],li"
+                        ) || el
+                    );
+                }
+            }
+        }
+
+        /*
+         * 2. Search clickable elements
+         */
+
+        const clickable =
+            Array.from(
+                document.querySelectorAll(
+                    'button,[role="button"],[role="menuitem"],li'
+                )
             );
+
+        for (const el of clickable) {
+            if (!isVisible(el)) continue;
+
+            const text =
+                normalizeText(
+                    el.innerText ||
+                    el.textContent
+                );
+
+            if (
+                exactTexts.some(
+                    target =>
+                        text ===
+                        target.toLowerCase()
+                )
+            ) {
+                return el;
+            }
+        }
+
+        /*
+         * 3. Search all elements
+         */
+
+        const all =
+            Array.from(
+                document.querySelectorAll(
+                    "body *"
+                )
+            );
+
+        for (const el of all) {
+            if (!isVisible(el)) continue;
+
+            const text =
+                normalizeText(
+                    el.textContent
+                );
+
+            if (
+                exactTexts.some(
+                    target =>
+                        text ===
+                        target.toLowerCase()
+                )
+            ) {
+                const clickableParent =
+                    el.closest(
+                        'button,[role="button"],[role="menuitem"],li'
+                    );
+
+                if (
+                    clickableParent &&
+                    isVisible(clickableParent)
+                ) {
+                    return clickableParent;
+                }
+
+                return el;
+            }
         }
 
         return null;
     }
 
     /* =========================================================
-       Close menus / overlays
+       Find Repost Button
+       Used as additional verification
+       ========================================================= */
+
+    function findRepostButton() {
+        const texts = [
+            "Repost",
+            "إعادة النشر"
+        ];
+
+        const elements =
+            Array.from(
+                document.querySelectorAll(
+                    'button,[role="button"],div,span'
+                )
+            );
+
+        for (const el of elements) {
+            if (!isVisible(el)) continue;
+
+            const text =
+                normalizeText(
+                    el.innerText ||
+                    el.textContent
+                );
+
+            if (
+                texts.some(
+                    t =>
+                        text ===
+                        t.toLowerCase()
+                )
+            ) {
+                return el;
+            }
+        }
+
+        return null;
+    }
+
+    /* =========================================================
+       Escape / Close Menu
        ========================================================= */
 
     async function pressEscape() {
         document.dispatchEvent(
-            new KeyboardEvent("keydown", {
-                key: "Escape",
-                code: "Escape",
-                bubbles: true
-            })
+            new KeyboardEvent(
+                "keydown",
+                {
+                    key: "Escape",
+                    code: "Escape",
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true
+                }
+            )
         );
 
         await delay(300);
     }
 
     /* =========================================================
-       Process current video
+       Remove Current Repost
        ========================================================= */
 
     async function removeCurrentRepost() {
-        log("Searching for Share button...");
-
-        const shareBtn = await waitForElement(
-            findShareButton,
-            CONFIG.elementTimeout
+        log(
+            "🔍 البحث عن زر Share..."
         );
 
+        const shareBtn =
+            await waitForElement(
+                findShareButton,
+                10000
+            );
+
         if (!shareBtn) {
-            throw new Error("Share button not found");
+            throw new Error(
+                "Share button not found"
+            );
         }
 
-        log("Share button found.");
+        log(
+            "✅ تم العثور على Share"
+        );
+
+        try {
+            shareBtn.scrollIntoView({
+                block: "center",
+                inline: "center"
+            });
+        } catch (_) {}
+
+        await delay(300);
 
         shareBtn.click();
 
-        await delay(CONFIG.actionWait);
-
-        log("Searching for Remove Repost...");
-
-        const removeBtn = await waitForElement(
-            findRemoveRepostButton,
-            CONFIG.elementTimeout
+        log(
+            "📂 تم فتح قائمة المشاركة"
         );
+
+        await delay(
+            CONFIG.shareWait
+        );
+
+        /*
+         * Search Remove repost
+         */
+
+        const removeBtn =
+            await waitForElement(
+                findRemoveRepostButton,
+                8000
+            );
 
         if (!removeBtn) {
             await pressEscape();
 
             throw new Error(
-                "Remove Repost button not found"
+                "Remove repost button not found"
             );
         }
 
-        log("Remove Repost found.");
+        log(
+            "🗑️ تم العثور على Remove repost"
+        );
+
+        try {
+            removeBtn.scrollIntoView({
+                block: "center",
+                inline: "center"
+            });
+        } catch (_) {}
+
+        await delay(300);
+
+        /*
+         * Click
+         */
 
         removeBtn.click();
 
-        await delay(CONFIG.successWait);
+        log(
+            "🖱️ تم الضغط على Remove repost"
+        );
 
         /*
-         * Try to verify that Remove Repost disappeared.
-         * This isn't perfect because TikTok UI can change,
-         * but it gives us an additional success check.
+         * Give TikTok time to process
          */
 
-        const stillExists = findRemoveRepostButton();
+        await delay(
+            CONFIG.successWait
+        );
 
-        if (stillExists) {
-            log(
-                "Remove Repost still exists. " +
-                "Assuming operation may have failed."
-            );
+        /*
+         * Verification #1:
+         * Remove repost should disappear.
+         */
 
-            await pressEscape();
+        const start =
+            Date.now();
 
-            throw new Error(
-                "Could not verify repost removal"
-            );
+        while (
+            Date.now() - start <
+            5000
+        ) {
+            const stillThere =
+                findRemoveRepostButton();
+
+            if (!stillThere) {
+                log(
+                    "✅ اختفى Remove repost"
+                );
+
+                return true;
+            }
+
+            await delay(300);
         }
 
-        return true;
+        /*
+         * Verification #2:
+         * Menu/dialog may have closed completely.
+         */
+
+        const menus =
+            Array.from(
+                document.querySelectorAll(
+                    '[role="menu"],[role="dialog"]'
+                )
+            ).filter(isVisible);
+
+        if (menus.length === 0) {
+            log(
+                "✅ قائمة المشاركة أُغلقت"
+            );
+
+            return true;
+        }
+
+        /*
+         * Verification #3:
+         * Search for repost indicator.
+         *
+         * This is only an additional check.
+         */
+
+        const repostIndicator =
+            findRepostButton();
+
+        if (repostIndicator) {
+            log(
+                "ℹ️ تم العثور على حالة Repost بعد العملية"
+            );
+
+            /*
+             * Don't immediately fail here because
+             * TikTok's DOM can contain hidden/stale
+             * elements.
+             */
+        }
+
+        await pressEscape();
+
+        throw new Error(
+            "Could not verify repost removal"
+        );
     }
 
     /* =========================================================
-       Process with Retry
+       Retry System
        ========================================================= */
 
     async function processWithRetry() {
@@ -346,19 +693,23 @@
         ) {
             try {
                 log(
-                    `Attempt ${attempt}/${CONFIG.maxRetries}`
+                    `🔄 محاولة ${attempt}/${CONFIG.maxRetries}`
                 );
 
                 const success =
                     await removeCurrentRepost();
 
                 if (success) {
+                    log(
+                        "🎉 العملية نجحت"
+                    );
+
                     return true;
                 }
 
             } catch (error) {
                 console.warn(
-                    `[HEMA] Attempt ${attempt} failed:`,
+                    `[HEMA] محاولة ${attempt} فشلت:`,
                     error.message
                 );
 
@@ -366,15 +717,15 @@
                     attempt <
                     CONFIG.maxRetries
                 ) {
+                    log(
+                        `⏳ إعادة المحاولة بعد ${CONFIG.retryDelay}ms`
+                    );
+
+                    await pressEscape();
+
                     await delay(
                         CONFIG.retryDelay
                     );
-
-                    /*
-                     * Sometimes the menu remains open.
-                     */
-
-                    await pressEscape();
                 }
             }
         }
@@ -383,27 +734,35 @@
     }
 
     /* =========================================================
-       Get Video Links
+       Collect Video Links
        ========================================================= */
 
     function collectVideoLinks() {
-        const links = Array.from(
-            document.querySelectorAll("a[href]")
-        )
-            .map(a => a.href)
-            .filter(href => {
-                try {
-                    const url = new URL(href);
+        const links =
+            Array.from(
+                document.querySelectorAll(
+                    "a[href]"
+                )
+            )
+                .map(a => a.href)
+                .filter(href => {
+                    try {
+                        const url =
+                            new URL(href);
 
-                    return (
-                        url.pathname.includes("/video/")
-                    );
-                } catch (_) {
-                    return false;
-                }
-            });
+                        return (
+                            url.pathname.includes(
+                                "/video/"
+                            )
+                        );
+                    } catch (_) {
+                        return false;
+                    }
+                });
 
-        return [...new Set(links)];
+        return [
+            ...new Set(links)
+        ];
     }
 
     /* =========================================================
@@ -413,41 +772,76 @@
     function createControlPanel() {
         if (!document.body) return;
 
-        let panel =
-            document.getElementById(PANEL_ID);
+        const state =
+            getState();
 
-        const state = getState();
+        let panel =
+            document.getElementById(
+                PANEL_ID
+            );
 
         if (!panel) {
-            panel = document.createElement("div");
+            panel =
+                document.createElement(
+                    "div"
+                );
 
-            panel.id = PANEL_ID;
+            panel.id =
+                PANEL_ID;
 
-            Object.assign(panel.style, {
-                position: "fixed",
-                top: "70px",
-                right: "15px",
-                zIndex: "2147483647",
-                background:
-                    "rgba(18,18,18,.97)",
-                color: "#fff",
-                border:
-                    "2px solid #fe2c55",
-                borderRadius: "14px",
-                padding: "15px",
-                fontFamily:
-                    "Arial,sans-serif",
-                boxShadow:
-                    "0 8px 25px rgba(0,0,0,.65)",
-                width: "230px",
-                textAlign: "center",
-                direction: "rtl",
-                backdropFilter:
-                    "blur(8px)"
-            });
+            Object.assign(
+                panel.style,
+                {
+                    position: "fixed",
 
-            document.body.appendChild(panel);
+                    top: "70px",
+
+                    right: "15px",
+
+                    zIndex:
+                        "2147483647",
+
+                    background:
+                        "rgba(18,18,18,.97)",
+
+                    color: "#fff",
+
+                    border:
+                        "2px solid #fe2c55",
+
+                    borderRadius:
+                        "14px",
+
+                    padding: "15px",
+
+                    fontFamily:
+                        "Arial,sans-serif",
+
+                    boxShadow:
+                        "0 8px 25px rgba(0,0,0,.65)",
+
+                    width: "230px",
+
+                    textAlign: "center",
+
+                    direction: "rtl",
+
+                    backdropFilter:
+                        "blur(8px)",
+
+                    boxSizing:
+                        "border-box"
+                }
+            );
+
+            document.body.appendChild(
+                panel
+            );
         }
+
+        /*
+         * START SCREEN
+         */
 
         if (!state.isRunning) {
             panel.innerHTML = `
@@ -466,6 +860,14 @@
                     افتح قسم الريبوست أولاً
                 </p>
 
+                <label style="
+                    display:block;
+                    font-size:12px;
+                    margin-bottom:6px;
+                ">
+                    عدد الريبوست:
+                </label>
+
                 <input
                     id="hema-target-count"
                     type="number"
@@ -483,6 +885,7 @@
                         background:#222;
                         color:#fff;
                         font-weight:bold;
+                        outline:none;
                     "
                 >
 
@@ -499,13 +902,13 @@
                         cursor:pointer;
                     "
                 >
-                    🚀 ابدأ
+                    🚀 ابدأ التنظيف
                 </button>
 
                 <div style="
                     margin-top:10px;
-                    font-size:10px;
-                    color:#888;
+                    font-size:9px;
+                    color:#777;
                 ">
                     HEMA Repost Cleaner
                 </div>
@@ -521,97 +924,113 @@
                     startCleaner;
             }
 
-        } else {
-            const progress =
-                state.targetCount > 0
-                    ? Math.round(
-                        (state.deletedCount /
-                            state.targetCount) *
+            return;
+        }
+
+        /*
+         * RUNNING SCREEN
+         */
+
+        const progress =
+            state.targetCount > 0
+                ? Math.round(
+                    (
+                        state.deletedCount /
+                        state.targetCount
+                    ) * 100
+                )
+                : 0;
+
+        panel.innerHTML = `
+            <h4 style="
+                margin:0 0 10px;
+                color:#00f2fe;
+            ">
+                ⚙️ جاري التنظيف
+            </h4>
+
+            <div style="
+                font-size:13px;
+                margin-bottom:8px;
+            ">
+                تم حذف:
+                <b style="
+                    color:#fe2c55;
+                    font-size:20px;
+                ">
+                    ${state.deletedCount}
+                </b>
+                /
+                ${state.targetCount}
+            </div>
+
+            <div style="
+                background:#333;
+                height:7px;
+                border-radius:10px;
+                overflow:hidden;
+                margin-bottom:10px;
+            ">
+                <div style="
+                    width:${Math.min(
+                        progress,
                         100
+                    )}%;
+                    height:100%;
+                    background:#fe2c55;
+                    transition:width .3s;
+                "></div>
+            </div>
+
+            <div style="
+                font-size:11px;
+                color:#aaa;
+                margin-bottom:10px;
+                line-height:1.8;
+            ">
+                التقدم: ${progress}%
+                <br>
+                فشل: ${state.failedCount}
+                <br>
+                متبقي: ${
+                    Math.max(
+                        0,
+                        state.targetCount -
+                        state.deletedCount
                     )
-                    : 0;
+                }
+            </div>
 
-            panel.innerHTML = `
-                <h4 style="
-                    margin:0 0 10px;
-                    color:#00f2fe;
-                ">
-                    ⚙️ جاري التنظيف
-                </h4>
+            <button
+                id="hema-stop"
+                style="
+                    width:100%;
+                    padding:10px;
+                    border:0;
+                    border-radius:7px;
+                    background:#555;
+                    color:#fff;
+                    font-weight:bold;
+                    cursor:pointer;
+                "
+            >
+                🛑 إيقاف
+            </button>
+        `;
 
-                <div style="
-                    font-size:13px;
-                    margin-bottom:8px;
-                ">
-                    تم حذف:
-                    <b style="
-                        color:#fe2c55;
-                        font-size:20px;
-                    ">
-                        ${state.deletedCount}
-                    </b>
-                    / ${state.targetCount}
-                </div>
+        const stopBtn =
+            document.getElementById(
+                "hema-stop"
+            );
 
-                <div style="
-                    background:#333;
-                    height:7px;
-                    border-radius:10px;
-                    overflow:hidden;
-                    margin-bottom:10px;
-                ">
-                    <div style="
-                        width:${Math.min(
-                            progress,
-                            100
-                        )}%;
-                        height:100%;
-                        background:#fe2c55;
-                        transition:width .3s;
-                    "></div>
-                </div>
-
-                <div style="
-                    font-size:11px;
-                    color:#aaa;
-                    margin-bottom:10px;
-                ">
-                    التقدم: ${progress}%
-                    <br>
-                    فشل: ${state.failedCount}
-                </div>
-
-                <button
-                    id="hema-stop"
-                    style="
-                        width:100%;
-                        padding:10px;
-                        border:0;
-                        border-radius:7px;
-                        background:#555;
-                        color:#fff;
-                        font-weight:bold;
-                        cursor:pointer;
-                    "
-                >
-                    🛑 إيقاف
-                </button>
-            `;
-
-            const stopBtn =
-                document.getElementById(
-                    "hema-stop"
-                );
-
-            if (stopBtn) {
-                stopBtn.onclick =
-                    stopCleaner;
-            }
+        if (stopBtn) {
+            stopBtn.onclick =
+                stopCleaner;
         }
     }
 
     /* =========================================================
-       Start
+       Start Cleaner
        ========================================================= */
 
     function startCleaner() {
@@ -621,13 +1040,19 @@
             );
 
         let target =
-            parseInt(input?.value || "0", 10);
+            parseInt(
+                input?.value || "0",
+                10
+            );
 
         if (
             Number.isNaN(target) ||
             target <= 0
         ) {
-            alert("⚠️ اكتب رقم صحيح.");
+            alert(
+                "⚠️ اكتب رقم صحيح."
+            );
+
             return;
         }
 
@@ -644,56 +1069,110 @@
 
         if (!links.length) {
             alert(
-                "⚠️ لم أجد فيديوهات. افتح قسم الريبوست وحمّل الفيديوهات المطلوبة على الشاشة."
+                "⚠️ لم أجد أي فيديوهات.\n\nافتح قسم الريبوست وحمّل الفيديوهات المطلوبة على الشاشة أولاً."
             );
 
             return;
         }
 
-        if (target > links.length) {
+        if (
+            target >
+            links.length
+        ) {
             alert(
-                `⚠️ المطلوب ${target} فيديو، لكن المتاح حالياً ${links.length} فقط.`
+                `⚠️ طلبت حذف ${target}، لكن الموجود حاليًا ${links.length} فقط.\n\nسيتم استخدام ${links.length} فيديو.`
             );
 
-            target = links.length;
+            target =
+                links.length;
         }
 
-        links = links.slice(0, target);
+        links =
+            links.slice(
+                0,
+                target
+            );
 
         const state = {
             isRunning: true,
-            targetCount: target,
-            deletedCount: 0,
-            failedCount: 0,
-            currentIndex: 0,
-            queue: links
+
+            targetCount:
+                target,
+
+            deletedCount:
+                0,
+
+            failedCount:
+                0,
+
+            currentIndex:
+                0,
+
+            queue:
+                links
         };
 
         saveState(state);
 
         log(
-            "Cleaner started.",
+            "🚀 Cleaner started",
             state
         );
 
         createControlPanel();
+
+        /*
+         * Open first video
+         */
 
         window.location.href =
             state.queue[0];
     }
 
     /* =========================================================
-       Stop
+       Stop Cleaner
        ========================================================= */
 
     function stopCleaner() {
         clearState();
 
-        log("Cleaner stopped.");
+        log(
+            "🛑 Cleaner stopped"
+        );
 
-        alert("🛑 تم إيقاف الأداة.");
+        alert(
+            "🛑 تم إيقاف الأداة."
+        );
 
         location.reload();
+    }
+
+    /* =========================================================
+       Finish Cleaner
+       ========================================================= */
+
+    function finishCleaner(state) {
+        const deleted =
+            state.deletedCount;
+
+        const failed =
+            state.failedCount;
+
+        clearState();
+
+        log(
+            "🎉 Finished",
+            {
+                deleted,
+                failed
+            }
+        );
+
+        alert(
+            `🎉 انتهت العملية!\n\nتم حذف: ${deleted}\nفشل: ${failed}`
+        );
+
+        createControlPanel();
     }
 
     /* =========================================================
@@ -701,7 +1180,8 @@
        ========================================================= */
 
     async function processQueue() {
-        const state = getState();
+        let state =
+            getState();
 
         if (!state.isRunning) {
             return;
@@ -716,65 +1196,93 @@
             return;
         }
 
+        log(
+            `📹 الفيديو الحالي: ${state.currentIndex + 1}/${state.targetCount}`
+        );
+
+        log(
+            "🔗",
+            state.queue[0]
+        );
+
+        /*
+         * Wait for TikTok page
+         */
+
         await delay(
             CONFIG.initialWait
         );
 
-        const currentUrl =
-            state.queue[0];
-
-        log(
-            "Processing:",
-            currentUrl
-        );
-
-        const success =
-            await processWithRetry();
-
-        const newState = getState();
-
-        if (success) {
-            newState.deletedCount++;
-
-            log(
-                `Success: ${newState.deletedCount}/${newState.targetCount}`
-            );
-        } else {
-            newState.failedCount++;
-
-            log(
-                "Failed after retries."
-            );
-        }
-
         /*
-         * Remove current item only after processing
-         * has finished.
+         * Check state again
+         * because user may have stopped it.
          */
 
-        newState.queue.shift();
+        state =
+            getState();
 
-        newState.currentIndex++;
-
-        saveState(newState);
-
-        createControlPanel();
-
-        /*
-         * Completed?
-         */
-
-        if (
-            newState.queue.length === 0 ||
-            newState.deletedCount >=
-                newState.targetCount
-        ) {
-            finishCleaner(newState);
+        if (!state.isRunning) {
             return;
         }
 
         /*
-         * Random delay before next video.
+         * Process current video
+         */
+
+        const success =
+            await processWithRetry();
+
+        /*
+         * Get latest state
+         */
+
+        state =
+            getState();
+
+        if (success) {
+            state.deletedCount++;
+
+            log(
+                `✅ تم الحذف بنجاح: ${state.deletedCount}/${state.targetCount}`
+            );
+        } else {
+            state.failedCount++;
+
+            log(
+                `❌ فشل الفيديو الحالي. عدد الفشل: ${state.failedCount}`
+            );
+        }
+
+        /*
+         * Important:
+         *
+         * Remove current item only AFTER
+         * processing/retries have finished.
+         */
+
+        state.queue.shift();
+
+        state.currentIndex++;
+
+        saveState(state);
+
+        createControlPanel();
+
+        /*
+         * Finished?
+         */
+
+        if (
+            state.queue.length === 0 ||
+            state.deletedCount >=
+                state.targetCount
+        ) {
+            finishCleaner(state);
+            return;
+        }
+
+        /*
+         * Wait before next video
          */
 
         const wait =
@@ -784,45 +1292,32 @@
             );
 
         log(
-            `Next video in ${wait}ms`
+            `⏳ الانتقال للفيديو التالي بعد ${wait}ms`
         );
 
         await delay(wait);
 
-        const latestState =
+        /*
+         * Get latest state
+         */
+
+        state =
             getState();
 
-        if (
-            !latestState.isRunning
-        ) {
+        if (!state.isRunning) {
             return;
         }
 
         if (
-            latestState.queue.length
+            state.queue.length > 0
         ) {
+            log(
+                "➡️ الانتقال للفيديو التالي"
+            );
+
             window.location.href =
-                latestState.queue[0];
+                state.queue[0];
         }
-    }
-
-    /* =========================================================
-       Finish
-       ========================================================= */
-
-    function finishCleaner(state) {
-        clearState();
-
-        log(
-            "Finished.",
-            state
-        );
-
-        alert(
-            `🎉 انتهت العملية!\n\nتم حذف: ${state.deletedCount}\nفشل: ${state.failedCount}`
-        );
-
-        createControlPanel();
     }
 
     /* =========================================================
@@ -836,6 +1331,10 @@
             getState();
 
         if (state.isRunning) {
+            log(
+                "🔄 استئناف العملية..."
+            );
+
             setTimeout(
                 processQueue,
                 1000
@@ -843,9 +1342,9 @@
         }
     }
 
-    /*
-     * Create panel after DOM is ready
-     */
+    /* =========================================================
+       DOM Ready
+       ========================================================= */
 
     if (
         document.readyState ===
@@ -854,23 +1353,25 @@
         document.addEventListener(
             "DOMContentLoaded",
             init,
-            { once: true }
+            {
+                once: true
+            }
         );
     } else {
         init();
     }
 
-    /*
-     * Keep panel synchronized without
-     * rebuilding it every 1.5 seconds.
-     */
+    /* =========================================================
+       Panel Sync
+       ========================================================= */
 
     setInterval(() => {
-        if (
+        const panel =
             document.getElementById(
                 PANEL_ID
-            )
-        ) {
+            );
+
+        if (panel) {
             createControlPanel();
         }
     }, 2000);
