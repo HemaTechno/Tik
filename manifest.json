@@ -1,16 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Hema Repost Remover",
+  "name": "TikTok Repost Remover",
   "version": "1.0",
-  "description": " أداة لحذف ريبوستات تيك توك تم التطوير بواسطة ابراهيم منصور ",
-  "action": {
-    "default_popup": "popup.html"
-  },
-  "permissions": [
-    "activeTab",
-    "scripting"
-  ],
-  "host_permissions": [
-    "*://*.tiktok.com/*"
+  "description": "أداة لحذف ريبوستات تيك توك",
+  "content_scripts": [
+    {
+      "matches": ["*://*.tiktok.com/*"],
+      "js": ["content.js"]
+    }
   ]
 }
