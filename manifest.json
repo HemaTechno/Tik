@@ -5,8 +5,12 @@
   "description": "أداة لحذف ريبوستات تيك توك",
   "content_scripts": [
     {
-      "matches": ["*://*.tiktok.com/*"],
-      "js": ["content.js"]
+      "matches": [
+        "*://*.tiktok.com/*",
+        "*://tiktok.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ]
 }
